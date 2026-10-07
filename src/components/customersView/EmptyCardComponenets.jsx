@@ -9,7 +9,7 @@ const EmptyCardComponenets = ({
 }) => {
     return (
         <div
-            className="d-flex flex-column align-items-center justify-content-center text-center "
+            className="d-flex flex-column align-items-center justify-content-center text-center"
             style={{
                 minHeight: "480px",
             }}
@@ -22,28 +22,18 @@ const EmptyCardComponenets = ({
                         {description}
                     </p>
 
-                    <a
-                        href="#"
-                        className="avatar-text bg-soft-primary text-primary mx-auto"
-                        data-toggle="tooltip"
-                        data-title="Create Proposals"
+                    <button
+                        type="button"
+                        onClick={onAction}
+                        className="btn btn-light rounded-circle d-flex align-items-center justify-content-center mx-auto"
+                        style={{
+                            width: "52px",
+                            height: "52px",
+                        }}
+                        title={actionTitle}
                     >
-                        <button
-                            type="button"
-                            onClick={onAction}
-                            className="btn btn-light rounded-circle d-flex align-items-center justify-content-center mx-auto"
-                            style={{
-                                width: "52px",
-                                height: "52px",
-                            }}
-                            title={actionTitle}
-                        >
-                            <FiPlus size={16} />
-                        </button>
-                    </a>
-
-
-
+                        <FiPlus size={16} />
+                    </button>
                 </div>
             </div>
         </div>

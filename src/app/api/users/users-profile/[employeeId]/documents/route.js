@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/jwt";
-import cloudinary from "@/lib/cloudinary";
+import { supabaseAdmin } from "@/lib/supabase";
 
 export async function POST(request, { params }) {
     try {
@@ -9,6 +9,7 @@ export async function POST(request, { params }) {
 
         // 🔐 1️⃣ AUTH CHECK
         const token = request.cookies.get("auth_token")?.value;
+
         if (!token) {
             return NextResponse.json(
                 { message: "Unauthorized" },
@@ -17,6 +18,7 @@ export async function POST(request, { params }) {
         }
 
         const decoded = verifyToken(token);
+
         if (!decoded?.userId) {
             return NextResponse.json(
                 { message: "Invalid token" },
@@ -70,7 +72,8 @@ export async function POST(request, { params }) {
             );
         }
 
-        const maxSize = 5 * 1024 * 1024; // 5MB
+        const maxSize = 5 * 1024 * 1024;
+
         if (file.size > maxSize) {
             return NextResponse.json(
                 { message: "File size must be under 5MB" },
@@ -109,27 +112,40 @@ export async function POST(request, { params }) {
             );
         }
 
-        // ☁️ 6️⃣ UPLOAD TO CLOUDINARY
+        // ☁️ 6️⃣ UPLOAD TO SUPABASE STORAGE
         const bytes = await file.arrayBuffer();
         const buffer = Buffer.from(bytes);
 
-        const uploadResult = await new Promise((resolve, reject) => {
-            cloudinary.uploader
-                .upload_stream(
-                    {
-                        folder: `hrms/user-documents/${organizationId}/${employeeId}`,
-                        resource_type: file.type === "application/pdf" ? "raw" : "image",
-                    },
-                    (error, result) => {
-                        if (error) reject(error);
-                        else resolve(result);
-                    }
-                )
-                .end(buffer);
-        });
+        const bucket =
+            process.env.SUPABASE_EMPLOYEE_DOCUMENTS_BUCKET;
 
-        const fileUrl = uploadResult.secure_url;
-        const publicId = uploadResult.public_id;
+        if (!bucket) {
+            throw new Error(
+                "SUPABASE_EMPLOYEE_DOCUMENTS_BUCKET is missing."
+            );
+        }
+
+        // Create unique file name
+        const fileName = `${Date.now()}-${file.name}`;
+
+        // Create storage path
+        const filePath = `hrms/user-documents/${organizationId}/${employeeId}/${fileName}`;
+
+        const { error: uploadError } = await supabaseAdmin.storage
+            .from(bucket)
+            .upload(filePath, buffer, {
+                contentType: file.type,
+                upsert: false,
+            });
+
+        if (uploadError) {
+            console.error("Supabase upload error:", uploadError);
+            throw uploadError;
+        }
+
+        // Store Supabase Storage path in database
+        const fileUrl = filePath;
+        const publicId = filePath;
 
         // 💾 7️⃣ SAVE TO DATABASE
         const document = await prisma.userDocument.create({
@@ -167,16 +183,25 @@ export async function POST(request, { params }) {
 export async function GET(request, { params }) {
     try {
         const token = request.cookies.get("auth_token")?.value;
+
         if (!token) {
-            return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+            return NextResponse.json(
+                { message: "Unauthorized" },
+                { status: 401 }
+            );
         }
 
         const decoded = verifyToken(token);
+
         if (!decoded?.userId) {
-            return NextResponse.json({ message: "Invalid token" }, { status: 401 });
+            return NextResponse.json(
+                { message: "Invalid token" },
+                { status: 401 }
+            );
         }
 
         const { employeeId } = params;
+
         console.log("The empoyeeId is: ", employeeId);
 
         const user = await prisma.user.findFirst({
@@ -187,18 +212,53 @@ export async function GET(request, { params }) {
         });
 
         if (!user) {
-            return NextResponse.json({ message: "User not found" }, { status: 404 });
+            return NextResponse.json(
+                { message: "User not found" },
+                { status: 404 }
+            );
         }
+
+        // 🔗 Generate temporary signed URLs
+        const bucket =
+            process.env.SUPABASE_EMPLOYEE_DOCUMENTS_BUCKET;
+
+        const documentsWithUrls = await Promise.all(
+            user.documents.map(async (document) => {
+                const { data: signedUrlData, error: signedUrlError } =
+                    await supabaseAdmin.storage
+                        .from(bucket)
+                        .createSignedUrl(document.fileUrl, 3600);
+
+                if (signedUrlError) {
+                    console.error(
+                        "Signed URL error:",
+                        signedUrlError
+                    );
+
+                    return {
+                        ...document,
+                        fileUrl: null,
+                    };
+                }
+
+                return {
+                    ...document,
+                    fileUrl: signedUrlData.signedUrl,
+                };
+            })
+        );
 
         return NextResponse.json({
             success: true,
-            documents: user.documents,
+            documents: documentsWithUrls,
         });
 
     } catch (error) {
         console.error(error);
-        return new Response("Error fetching documents", { status: 500 });
+
+        return new Response(
+            "Error fetching documents",
+            { status: 500 }
+        );
     }
 }
-
-
